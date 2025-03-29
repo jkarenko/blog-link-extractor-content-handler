@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Your rule content
+
+- Commit messages are always concise and conventional: feat(UI): add save button in contact form
