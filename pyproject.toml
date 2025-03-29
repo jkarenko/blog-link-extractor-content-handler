@@ -1,14 +1,15 @@
 [tool.poetry]
-name = "your-project-name" # Replace with the name you chose during init
+name = "Blog Link Extractor & Content Handler (BLECH)"
 version = "0.1.0"
-description = "" # Add a description if you like
-authors = ["Your Name <you@example.com>"] # Replace with your details
-readme = "README.md" # Optional: create a README file
+description = "BLECH is a tool designed to automatically identify and extract links to individual posts from a blog's main page, index, or feed. After identifying the links, it proceeds to fetch and parse the content of each blog post, making it easier to process, analyze, or archive blog data."
+authors = ["jkarenko <juho.karenko@gmail.com"] # Replace with your details
+readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.9" # Or your desired Python version
-requests = "^2.32.3" # Example version
-beautifulsoup4 = "^4.12.3" # Example version
+python = "^3.9"
+# Core dependencies for HTTP requests and HTML parsing
+requests = "^2.32.3"
+beautifulsoup4 = "^4.12.3"
 
 [build-system]
 requires = ["poetry-core"]
