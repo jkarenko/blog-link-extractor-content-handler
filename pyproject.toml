@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "your-project-name" # Replace with the name you chose during init
+version = "0.1.0"
+description = "" # Add a description if you like
+authors = ["Your Name <you@example.com>"] # Replace with your details
+readme = "README.md" # Optional: create a README file
+
+[tool.poetry.dependencies]
+python = "^3.9" # Or your desired Python version
+requests = "^2.32.3" # Example version
+beautifulsoup4 = "^4.12.3" # Example version
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api" 
