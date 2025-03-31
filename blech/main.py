@@ -1,12 +1,12 @@
 import argparse
+import importlib.metadata  # To read version from pyproject.toml
 import logging
-import re
-import time
 import os
-from typing import List, Optional
+import re
+import sys
+from typing import List
 from urllib.parse import urlparse
-import importlib.metadata # To read version from pyproject.toml
-import sys # For exit codes
+
 import requests
 
 try:
@@ -16,11 +16,15 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 # Import from local modules within the package
-from .models import PostData
-from .scraper import BlogScraper
-# We'll move config values into scraper or a dedicated config_defaults.py
+try:
+    # When running as an installed package
+    from .models import PostData
+    from .scraper import BlogScraper
+except ImportError:
+    # When running the file directly
+    from blech.models import PostData
+    from blech.scraper import BlogScraper
 
-# --- Basic Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define the main function that will be called by the entry point

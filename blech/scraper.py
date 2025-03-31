@@ -1,15 +1,20 @@
 import logging
 import re
 import time
-from collections import Counter
-from typing import Any, Dict, List, Optional, Set, Tuple, Callable
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 
-from . import config_defaults as config # Import internal defaults
-from .models import PostData
+try:
+    # When running as an installed package
+    from . import config_defaults as config
+    from .models import PostData
+except ImportError:
+    # When running the file directly
+    from blech import config_defaults as config
+    from blech.models import PostData
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +34,9 @@ class BlogScraper:
         self.lang = lang
 
         # Internal state
-        self.discovered_urls: Set[str] = set() # URLs found on index/API
-        self.processed_urls: Set[str] = set() # URLs actually scraped for content
-        self.all_post_data: List[PostData] = [] # Collected post data
+        self.discovered_urls: Set[str] = set()
+        self.processed_urls: Set[str] = set()
+        self.all_post_data: List[PostData] = []
 
         # Configuration from defaults
         self.session = requests.Session()
@@ -128,7 +133,7 @@ class BlogScraper:
         posts_endpoint = urljoin(self.api_root_url, 'wp/v2/posts')
         params = {'page': page, 'per_page': config.API_POSTS_PER_PAGE, '_embed': 'true'}
         if self.lang:
-            params['lang'] = self.lang # Add language filter if specified
+            params['lang'] = self.lang
 
         try:
             logger.debug(f"Requesting API: {posts_endpoint} with params: {params}")
@@ -142,7 +147,7 @@ class BlogScraper:
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed: {e}")
             return None
-        except Exception as e: # Catch potential JSON decoding errors too
+        except Exception as e:
             logger.error(f"Error processing API response: {e}")
             return None
 
@@ -150,7 +155,7 @@ class BlogScraper:
         """Fetches all post URLs from the WP REST API using pagination."""
         all_posts: List[Dict[str, Any]] = []
         page = 1
-        max_pages = config.API_MAX_PAGES # Limit requests
+        max_pages = config.API_MAX_PAGES
 
         while page <= max_pages:
             logger.info(f"Fetching API page {page}...")
@@ -158,13 +163,13 @@ class BlogScraper:
             if posts:
                 all_posts.extend(posts)
                 # Be polite between API calls
-                time.sleep(config.INTER_REQUEST_DELAY / 2) # Shorter delay for API pagination
-            elif posts == []: # Empty list means end of pages
+                time.sleep(config.INTER_REQUEST_DELAY / 2)
+            elif posts == []:
                 logger.info("Reached end of API results.")
                 break
             else:
                 logger.warning(f"Failed to fetch API page {page}, stopping API fetch.")
-                break # Stop if a page fetch fails
+                break
             page += 1
 
             if page > max_pages:
@@ -182,8 +187,6 @@ class BlogScraper:
                 # Basic validation - is it a valid, absolute URL?
                 parsed = urlparse(url)
                 if parsed.scheme and parsed.netloc:
-                     # Optionally apply stricter filtering if needed, but API is usually reliable
-                     # if self._is_likely_post_url(url): # Can reuse HTML filter if desired
                     api_urls.add(url)
                 else:
                     logger.debug(f"Ignoring invalid URL from API: {url}")
@@ -191,7 +194,7 @@ class BlogScraper:
         if api_urls:
             logger.info(f"Found {len(api_urls)} potential post URLs via API.")
             self.discovered_urls.update(api_urls)
-            self._api_used_successfully = True # Mark API as successful
+            self._api_used_successfully = True
             return True
         else:
             logger.info("No valid post URLs extracted from API data.")
@@ -251,7 +254,7 @@ class BlogScraper:
                 return False
 
             return True
-        except Exception as e: # Catch potential errors from urlparse/urljoin
+        except Exception as e:
             logger.debug(f"Error parsing or validating URL '{url}' relative to '{current_page_url}': {e}")
             return False
 
@@ -283,9 +286,6 @@ class BlogScraper:
         initial_count = len(self.discovered_urls)
         self._find_post_links_on_page(soup, self.base_url)
 
-        # TODO: Implement pagination discovery/following for HTML scraping if needed
-        # This currently only scrapes the single base_url page.
-
         return len(self.discovered_urls) > initial_count
 
     # --- Content Extraction ---
@@ -304,10 +304,10 @@ class BlogScraper:
 
         # 1. Guess Title Selector
         found_title = False
-        title_selectors = config.COMMON_TITLE_SELECTORS + ['h1'] # Add plain h1 as fallback
+        title_selectors = config.COMMON_TITLE_SELECTORS + ['h1']
         for selector in title_selectors:
             element = soup.select_one(selector)
-            if element and len(element.get_text(strip=True)) > 3: # Basic check
+            if element and len(element.get_text(strip=True)) > 3:
                 self.content_selectors['title'] = selector
                 found_title = True
                 logger.debug(f"Guessed title selector: {selector}")
@@ -324,15 +324,14 @@ class BlogScraper:
                     self.content_selectors['date_attr'] = 'datetime'
                     found_date = True
                     break
-                # Could add checks for other common attributes like 'content' for meta tags if needed
 
         # If no <time datetime> found, check again for any date selector match just for text
         if not found_date:
             for selector in date_selectors:
                  element = soup.select_one(selector)
-                 if element and len(element.get_text(strip=True)) > 4: # Check for some text
+                 if element and len(element.get_text(strip=True)) > 4:
                      self.content_selectors['date'] = selector
-                     self.content_selectors['date_attr'] = None # Indicate we need to grab text
+                     self.content_selectors['date_attr'] = None
                      found_date = True
                      break
 
@@ -341,11 +340,11 @@ class BlogScraper:
 
         # 3. Guess Content Selector
         found_content = False
-        content_selectors = config.COMMON_CONTENT_SELECTORS + ['article', 'main'] # Add fallbacks
+        content_selectors = config.COMMON_CONTENT_SELECTORS + ['article', 'main']
         for selector in content_selectors:
             element = soup.select_one(selector)
             # Basic validation: Element exists and has substantial text content
-            if element and len(element.get_text(strip=True)) > config.MIN_CONTENT_LENGTH: # Use config
+            if element and len(element.get_text(strip=True)) > config.MIN_CONTENT_LENGTH:
                 self.content_selectors['content'] = selector
                 found_content = True
                 logger.debug(f"Guessed content selector: {selector}")
