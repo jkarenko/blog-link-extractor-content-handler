@@ -363,6 +363,20 @@ class BlogScraper:
             if element:
                 title = element.get_text(strip=True)
 
+        # Fallback title extraction if no title found with guessed selectors
+        if not title:
+            # Try to find any H1 tag
+            h1_tags = soup.find_all('h1')
+            if h1_tags:
+                # If multiple H1 tags, use heuristics to select the most likely title
+                # For now, just use the first one that has substantial text
+                for h1 in h1_tags:
+                    h1_text = h1.get_text(strip=True)
+                    if len(h1_text) > 3 and len(h1_text) < 200:  # Reasonable title length
+                        title = h1_text
+                        logger.debug(f"Using fallback H1 tag for title: {title[:50]}...")
+                        break
+
         # Extract Date
         if self.content_selectors['date']:
             element = soup.select_one(self.content_selectors['date'])
@@ -376,6 +390,7 @@ class BlogScraper:
              date_str = self.content_selectors['date_text']
 
         # Extract Content
+        content_extracted = False
         if self.content_selectors['content']:
             element = soup.select_one(self.content_selectors['content'])
             if element:
@@ -383,8 +398,43 @@ class BlogScraper:
                 paragraphs = element.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li', 'pre']) # Common text block tags
                 if paragraphs:
                      content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-                else: # Fallback to all text if no block tags found
+                     content_extracted = bool(content)
+
+                # Fallback to all text if no block tags found or no content extracted
+                if not content_extracted:
                     content = element.get_text(strip=True, separator='\n')
+                    content_extracted = len(content) > config.MIN_CONTENT_LENGTH
+
+        # Fallback content extraction if no content found with guessed selectors
+        if not content_extracted:
+            # Try main tag first
+            main_tag = soup.find('main')
+            if main_tag:
+                # Try to find paragraphs within main
+                paragraphs = main_tag.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
+                if paragraphs:
+                    content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                    content_extracted = bool(content)
+
+                # If still no content, try to get all text from main
+                if not content_extracted:
+                    content = main_tag.get_text(strip=True, separator='\n')
+                    content_extracted = len(content) > config.MIN_CONTENT_LENGTH
+
+                if content_extracted:
+                    logger.debug(f"Extracted content from main tag, length: {len(content)}")
+
+            # If still no content, try article tag
+            if not content_extracted:
+                article_tags = soup.find_all('article')
+                for article in article_tags:
+                    paragraphs = article.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
+                    if paragraphs:
+                        content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                        content_extracted = bool(content)
+                        if content_extracted:
+                            logger.debug(f"Extracted content from article tag, length: {len(content)}")
+                            break
 
         # Basic validation: Need at least URL and some content or title
         if content or title:

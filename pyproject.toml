@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "blech"
-version = "0.1.0"
+version = "0.1.2"
 description = "BLECH is a tool designed to automatically identify and extract links to individual posts from a blog's main page, index, or feed. After identifying the links, it proceeds to fetch and parse the content of each blog post, making it easier to process, analyze, or archive blog data."
 authors = ["jkarenko <juho.karenko@gmail.com>"]
 readme = "README.md"
