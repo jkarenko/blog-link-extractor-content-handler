@@ -2,6 +2,7 @@ import logging
 import re
 import time
 import hashlib
+import os
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -27,12 +28,15 @@ class BlogScraper:
         Args:
             base_url: The starting URL for discovery (blog index, feed, etc.).
             lang: Optional language code for filtering (primarily for API).
+            output_filename: Optional filename for saving posts. If not provided, posts won't be saved immediately.
 
         Raises:
             ValueError: If the base_url is invalid.
         """
         self.base_url = self._validate_and_normalize_url(base_url)
         self.lang = lang
+        self.output_filename = output_filename
+        self.one_file = False  # Default to saving as separate files
 
         # Internal state
         self.discovered_urls: Set[str] = set()
@@ -82,6 +86,43 @@ class BlogScraper:
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid base_url: {url}. Could not parse scheme or domain.")
         return url
+
+    def _save_post_to_file(self, post_data: PostData, index: int) -> None:
+        """
+        Saves a single post to a file immediately after processing.
+
+        Args:
+            post_data: The PostData object to save.
+            index: The index of the post (used for filename generation).
+        """
+        if not self.output_filename:
+            return  # Skip saving if no output filename was provided
+
+        if self.one_file:
+            # Append to a single file
+            with open(self.output_filename, 'a', encoding='utf-8') as f:
+                f.write(post_data.format_output())
+            logger.info(f"Appended post to {self.output_filename}")
+        else:
+            # Create directory for separate files if it doesn't exist
+            dir_name = self.output_filename
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name)
+                logger.info(f"Created directory: {dir_name}")
+
+            # Create a safe filename from the post title or use index if title is not available
+            if post_data.title:
+                # Sanitize title for filename
+                safe_title = re.sub(r'[^\w\-.]+', '_', post_data.title).strip('_')
+                # Limit filename length and ensure uniqueness with index
+                safe_title = safe_title[:50] + f"_{index+1}"
+            else:
+                safe_title = f"post_{index+1}"
+
+            file_path = os.path.join(dir_name, f"{safe_title}.txt")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(post_data.format_output())
+            logger.info(f"Saved post to {file_path}")
 
     def _fetch_soup(self, url: str) -> Optional[BeautifulSoup]:
         """Fetches content from a URL and returns a BeautifulSoup object."""
@@ -720,6 +761,8 @@ class BlogScraper:
                 post_data = self._extract_post_data(url, soup)
                 if post_data:
                     self.all_post_data.append(post_data)
+                    # Save post immediately after processing
+                    self._save_post_to_file(post_data, len(self.all_post_data) - 1)
             else:
                  logger.warning(f"Skipping post data extraction for {url} due to fetch/parse error.")
 

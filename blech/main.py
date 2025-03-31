@@ -66,42 +66,21 @@ def main():
         logging.info(f"Output filename not specified, using default: {output_filename}")
 
     try:
-        scraper = BlogScraper(base_url=args.base_url, lang=args.lang)
+        # Create scraper with output_filename parameter
+        scraper = BlogScraper(base_url=args.base_url, lang=args.lang, output_filename=output_filename)
+        # Set one_file flag based on command-line argument
+        scraper.one_file = args.one_file
+
         logging.info("Starting scraping process...")
         all_posts_data: List[PostData] = scraper.run()
         logging.info(f"Scraping finished. Found {len(all_posts_data)} posts.")
 
+        # Posts are now saved immediately after processing, so we don't need to save them again here
         if all_posts_data:
             if args.one_file:
-                logging.info(f"Saving posts to {output_filename}...")
-                with open(output_filename, 'w', encoding='utf-8') as f:
-                    for post_data in all_posts_data:
-                        f.write(post_data.format_output())
-                logging.info("Successfully saved posts.")
+                logging.info(f"All posts have been saved to {output_filename}.")
             else:
-                # Create directory for separate files
-                dir_name = output_filename
-                if not os.path.exists(dir_name):
-                    os.makedirs(dir_name)
-                    logging.info(f"Created directory: {dir_name}")
-
-                logging.info(f"Saving posts as separate files in {dir_name}...")
-                for i, post_data in enumerate(all_posts_data):
-                    # Create a safe filename from the post title or use index if title is not available
-                    if post_data.title:
-                        # Sanitize title for filename
-                        safe_title = re.sub(r'[^\w\-.]+', '_', post_data.title).strip('_')
-                        # Limit filename length and ensure uniqueness with index
-                        safe_title = safe_title[:50] + f"_{i+1}"
-                    else:
-                        safe_title = f"post_{i+1}"
-
-                    file_path = os.path.join(dir_name, f"{safe_title}.txt")
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write(post_data.format_output())
-                    logging.debug(f"Saved post to {file_path}")
-
-                logging.info(f"Successfully saved {len(all_posts_data)} posts as separate files.")
+                logging.info(f"All posts have been saved as separate files in {output_filename}.")
         else:
             logging.warning("No posts were successfully extracted.")
 
