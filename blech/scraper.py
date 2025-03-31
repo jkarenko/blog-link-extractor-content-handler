@@ -21,7 +21,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class BlogScraper:
-    def __init__(self, base_url: str, lang: Optional[str] = None, output_filename: Optional[str] = None):
+    def __init__(self, base_url: str, lang: Optional[str] = None, output_filename: Optional[str] = None,
+                 max_pages: Optional[int] = None, start_page: int = 1, end_page: Optional[int] = None):
         """
         Initializes the scraper.
 
@@ -29,6 +30,9 @@ class BlogScraper:
             base_url: The starting URL for discovery (blog index, feed, etc.).
             lang: Optional language code for filtering (primarily for API).
             output_filename: Optional filename for saving posts. If not provided, posts won't be saved immediately.
+            max_pages: Maximum number of pages to fetch. Overrides config.API_MAX_PAGES if provided.
+            start_page: Starting page number for scraping (default: 1).
+            end_page: Ending page number for scraping. If not provided, scrapes until max_pages or end of content.
 
         Raises:
             ValueError: If the base_url is invalid.
@@ -37,6 +41,11 @@ class BlogScraper:
         self.lang = lang
         self.output_filename = output_filename
         self.one_file = False  # Default to saving as separate files
+
+        # Pagination control
+        self.max_pages = max_pages if max_pages is not None else config.API_MAX_PAGES
+        self.start_page = start_page
+        self.end_page = end_page if end_page is not None else self.max_pages
 
         # Internal state
         self.discovered_urls: Set[str] = set()
@@ -205,10 +214,11 @@ class BlogScraper:
     def _fetch_urls_from_api(self) -> bool:
         """Fetches all post URLs from the WP REST API using pagination."""
         all_posts: List[Dict[str, Any]] = []
-        page = 1
-        max_pages = config.API_MAX_PAGES
+        page = self.start_page
+        max_pages = self.max_pages
+        end_page = self.end_page
 
-        while page <= max_pages:
+        while page <= end_page:
             logger.info(f"Fetching API page {page}...")
             posts = self._fetch_posts_page_from_api(page)
             if posts:
@@ -223,8 +233,8 @@ class BlogScraper:
                 break
             page += 1
 
-            if page > max_pages:
-                 logger.warning(f"Reached maximum API page limit ({max_pages}).")
+            if page > end_page:
+                 logger.warning(f"Reached maximum API page limit ({end_page}).")
                  break
 
         if not all_posts:
@@ -467,7 +477,9 @@ class BlogScraper:
         # Start with the base URL
         pages_to_scrape = [self.base_url]
         scraped_pages = set()
-        max_pages = config.API_MAX_PAGES  # Reuse the same limit as API pagination
+        max_pages = self.max_pages
+        start_page = self.start_page
+        end_page = self.end_page
 
         initial_count = len(self.discovered_urls)
 
@@ -475,7 +487,9 @@ class BlogScraper:
         # that works for all sites
 
         # Process pages until we run out or hit the limit
-        while pages_to_scrape and len(scraped_pages) < max_pages:
+        # Skip pages before start_page if possible (for HTML scraping, this is approximate)
+        page_count = 1
+        while pages_to_scrape and page_count <= end_page:
             current_page_url = pages_to_scrape.pop(0)
 
             # Skip if we've already scraped this page
@@ -493,22 +507,31 @@ class BlogScraper:
                 logger.warning(f"Could not fetch or parse: {current_page_url}. Skipping.")
                 continue
 
-            # Find post links on this page
-            self._find_post_links_on_page(soup, current_page_url, use_wp_heuristics)
+            # Only find post links if we're at or past the start_page
+            if page_count >= start_page:
+                # Find post links on this page
+                self._find_post_links_on_page(soup, current_page_url, use_wp_heuristics)
 
-            # Calculate how many new links were found on this page
-            new_links_found = len(self.discovered_urls) - initial_discovered_count
-            logger.debug(f"Found {new_links_found} new links on page: {current_page_url}")
+                # Calculate how many new links were found on this page
+                new_links_found = len(self.discovered_urls) - initial_discovered_count
+                logger.debug(f"Found {new_links_found} new links on page: {current_page_url}")
+            else:
+                logger.debug(f"Skipping post link discovery for page {page_count} (before start_page {start_page})")
 
             # Mark this page as scraped
             scraped_pages.add(current_page_url)
 
-            # Find pagination links and add them to the queue
-            pagination_links = self._extract_pagination_links(soup, current_page_url)
-            for link in pagination_links:
-                if link not in scraped_pages and link not in pages_to_scrape:
-                    pages_to_scrape.append(link)
-                    logger.debug(f"Added pagination link to queue: {link}")
+            # Only process the page if we're at or past the start_page
+            if page_count >= start_page:
+                # Find pagination links and add them to the queue
+                pagination_links = self._extract_pagination_links(soup, current_page_url)
+                for link in pagination_links:
+                    if link not in scraped_pages and link not in pages_to_scrape:
+                        pages_to_scrape.append(link)
+                        logger.debug(f"Added pagination link to queue: {link}")
+
+            # Increment page counter
+            page_count += 1
 
             # We don't need special case handling anymore as we're using a simpler pagination approach
             # that works for all sites
@@ -516,8 +539,8 @@ class BlogScraper:
             # Be polite between page requests
             time.sleep(config.INTER_REQUEST_DELAY)
 
-        if len(scraped_pages) >= max_pages:
-            logger.warning(f"Reached maximum page limit ({max_pages}). Some pages may not have been scraped.")
+        if page_count > end_page:
+            logger.warning(f"Reached maximum page limit ({end_page}). Some pages may not have been scraped.")
 
         logger.info(f"Scraped {len(scraped_pages)} pages in total.")
         return len(self.discovered_urls) > initial_count

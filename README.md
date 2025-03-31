@@ -74,6 +74,9 @@ blech [OPTIONS] <BASE_URL>
 *   `-o`, `--output <FILENAME>`: (Optional) The file where extracted content should be saved. If not provided, a default filename will be generated based on the blog's domain (e.g., `example-blog.com_blog_posts.txt`).
 *   `-l`, `--lang <LANG_CODE>`: (Optional) Filter posts by language code (e.g., 'en', 'fi'). This primarily works when the blog uses a WordPress REST API that supports language filtering.
 *   `--one-file`: (Optional) Save all blog posts to a single file instead of separate files. By default, each post is saved as a separate file in a directory named based on the output filename without the .txt extension (e.g., `example-blog.com_blog_posts`).
+*   `--max-pages <NUMBER>`: (Optional) Maximum number of pages to fetch. Overrides the default limit (10 pages).
+*   `--start-page <NUMBER>`: (Optional) Starting page number for scraping. Default is 1.
+*   `--end-page <NUMBER>`: (Optional) Ending page number for scraping. Default is the value of max-pages.
 *   `-h`, `--help`: (Optional) Show this help message and exit.
 
 ### Example:
@@ -96,3 +99,12 @@ poetry run blech --one-file https://example-blog.com/
 
 # Scrape posts, specify output filename, and save to a single file
 poetry run blech --output custom_file_name.txt --one-file https://example-blog.com/
+
+# Scrape posts with pagination control (fetch up to 20 pages)
+poetry run blech --max-pages 20 https://example-blog.com/
+
+# Scrape posts starting from page 3
+poetry run blech --start-page 3 https://example-blog.com/
+
+# Scrape posts from page 2 to page 5 only
+poetry run blech --start-page 2 --end-page 5 https://example-blog.com/

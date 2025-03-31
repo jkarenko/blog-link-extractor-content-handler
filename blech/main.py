@@ -9,6 +9,14 @@ from urllib.parse import urlparse
 
 import requests
 
+# Import config_defaults for default values
+try:
+    # When running as an installed package
+    from . import config_defaults as config
+except ImportError:
+    # When running the file directly
+    from blech import config_defaults as config
+
 try:
     __version__ = importlib.metadata.version("blech")
 except importlib.metadata.PackageNotFoundError:
@@ -41,6 +49,9 @@ def main():
     parser.add_argument("-l", "--lang", help="Optional language code filter (e.g., 'en', 'fi'). Primarily affects API requests.", default=None)
     parser.add_argument("--one-file", help="Save all blog posts to a single file instead of separate files.", action="store_true")
     parser.add_argument("-v", "--verbose", help="Enable debug logging.", action="store_true")
+    parser.add_argument("--max-pages", type=int, help="Maximum number of pages to fetch.", default=config.API_MAX_PAGES)
+    parser.add_argument("--start-page", type=int, help="Starting page number for scraping.", default=1)
+    parser.add_argument("--end-page", type=int, help="Ending page number for scraping.", default=None)
 
     args = parser.parse_args()
 
@@ -66,8 +77,15 @@ def main():
         logging.info(f"Output filename not specified, using default: {output_filename}")
 
     try:
-        # Create scraper with output_filename parameter
-        scraper = BlogScraper(base_url=args.base_url, lang=args.lang, output_filename=output_filename)
+        # Create scraper with output_filename parameter and pagination parameters
+        scraper = BlogScraper(
+            base_url=args.base_url, 
+            lang=args.lang, 
+            output_filename=output_filename,
+            max_pages=args.max_pages,
+            start_page=args.start_page,
+            end_page=args.end_page
+        )
         # Set one_file flag based on command-line argument
         scraper.one_file = args.one_file
 
