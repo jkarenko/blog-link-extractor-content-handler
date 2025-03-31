@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "Blog Link Extractor & Content Handler (BLECH)"
+name = "blech"
 version = "0.1.0"
 description = "BLECH is a tool designed to automatically identify and extract links to individual posts from a blog's main page, index, or feed. After identifying the links, it proceeds to fetch and parse the content of each blog post, making it easier to process, analyze, or archive blog data."
-authors = ["jkarenko <juho.karenko@gmail.com>"] # Replace with your details
+authors = ["jkarenko <juho.karenko@gmail.com>"]
 readme = "README.md"
-license = "MIT"  # Example: Choose an appropriate license
-homepage = "https://github.com/your_username/blech" # Example: Add your repo URL
-repository = "https://github.com/your_username/blech" # Example: Add your repo URL
+license = "MIT"
+homepage = "https://github.com/jkarenko/blog-crawler"
+repository = "https://github.com/jkarenko/blog-crawler"
 keywords = ["blog", "scraper", "content extraction", "web scraping", "cli"]
-classifiers = [ # See https://pypi.org/classifiers/
+classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License", # Match your chosen license
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -26,16 +26,11 @@ packages = [{ include = "blech" }]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-# Core dependencies for HTTP requests and HTML parsing
 requests = "^2.32.3"
 beautifulsoup4 = "^4.12.3"
-# Add other dependencies if needed, e.g., tqdm for progress bars
-# tqdm = "^4.66.0"
-
 
 [tool.poetry.scripts]
-# This allows running 'blech' from the command line after installation
-blech = "blech.main:main" # Assumes your package source code is in a 'blech' directory
+blech = "blech.main:main"
 
 [build-system]
 requires = ["poetry-core"]
