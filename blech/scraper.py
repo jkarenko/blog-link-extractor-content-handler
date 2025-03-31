@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+import hashlib
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -37,6 +38,15 @@ class BlogScraper:
         self.discovered_urls: Set[str] = set()
         self.processed_urls: Set[str] = set()
         self.all_post_data: List[PostData] = []
+        self.likely_post_url_pattern: Optional[str] = None
+        self.filtered_urls: Set[str] = set()  # URLs that match the likely post pattern
+
+        # Pagination state for special cases
+        self._afry_pagination_template: Optional[str] = None
+        self._afry_highest_page: int = 0
+        self._afry_consecutive_empty_pages: int = 0
+        self._afry_page_content_hashes: Dict[int, int] = {}  # Store content hash for each page
+        self._afry_consecutive_duplicate_pages: int = 0
 
         # Configuration from defaults
         self.session = requests.Session()
@@ -227,7 +237,12 @@ class BlogScraper:
             if absolute_url == self.base_url:
                  return False
 
-            # 4. Path should generally be longer than the root path found initially
+            # 4. Special case for AFRY: Handle both "/insight/" and "/insights/" paths
+            if '/en/insight/' in parsed_url.path or '/en/insights/' in parsed_url.path:
+                # This is likely a blog post on AFRY
+                return True
+
+            # 5. Path should generally be longer than the root path found initially
             #    (Handles cases where blog is in subfolder like /blog/)
             if not parsed_url.path or not parsed_url.path.startswith(self.potential_blog_root):
                  # Allow exceptions if potential_blog_root is just '/'
@@ -258,34 +273,212 @@ class BlogScraper:
             logger.debug(f"Error parsing or validating URL '{url}' relative to '{current_page_url}': {e}")
             return False
 
-    def _find_post_links_on_page(self, soup: BeautifulSoup, page_url: str) -> None:
-        """Scans a page's soup for likely post links and adds them to discovered_urls."""
-        found_count = 0
-        links = soup.find_all('a', href=True)
-        logger.debug(f"Found {len(links)} total links on {page_url}")
+    def _extract_article_links(self, soup: BeautifulSoup, page_url: str) -> List[str]:
+        """
+        Extract a set of article-like links using content-based heuristics.
+        This method removes typical navigation sections and applies filters based on link text.
+        """
+        # Remove known navigation sections to reduce noise
+        for container in soup.find_all(['nav', 'header', 'footer']):
+            container.decompose()
 
-        for link in links:
-            href = link['href']
+        # Gather links and deduplicate
+        links = set()
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            full_url = urljoin(page_url, href)
+
+            # Skip links that are empty or anchor-only
+            if not full_url or full_url.startswith('#'):
+                continue
+
+            # Skip if link text is too short (unless it includes an image with alt text)
+            link_text = a_tag.get_text(strip=True)
+            if len(link_text) < 5 and not (a_tag.find('img') and a_tag.find('img').get('alt')):
+                continue
+
+            # Apply our existing URL-based heuristics
             if self._is_likely_post_url(href, page_url):
-                absolute_url = urljoin(page_url, href)
-                if absolute_url not in self.discovered_urls and absolute_url not in self.processed_urls:
-                    self.discovered_urls.add(absolute_url)
-                    found_count += 1
-                    logger.debug(f"Found potential post link: {absolute_url}")
+                links.add(full_url)
+
+        return list(links)
+
+    def _extract_non_wp_article_links(self, soup: BeautifulSoup, page_url: str) -> List[str]:
+        """
+        Extract a set of article-like links using a generic heuristic that doesn't rely on URL patterns.
+        This is useful for non-WordPress sites where our URL-based heuristics might be too restrictive.
+
+        This heuristic:
+        1. Removes typical navigation sections (nav, header, footer)
+        2. Extracts links with substantial text (>5 characters) or with images that have alt text
+        3. Does NOT apply URL-based filtering, making it more suitable for sites with non-standard URL structures
+
+        While this approach may include some non-article links (like social media sharing links),
+        it generally finds more valid article links on non-WordPress sites compared to the WordPress-specific heuristic.
+        """
+        # Remove known navigation sections to reduce noise
+        for container in soup.find_all(['nav', 'header', 'footer']):
+            container.decompose()
+
+        # Gather links and deduplicate
+        links = set()
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            full_url = urljoin(page_url, href)
+
+            # Skip links that are empty or anchor-only
+            if not full_url or full_url.startswith('#'):
+                continue
+
+            # Skip if link text is too short (unless it includes an image with alt text)
+            link_text = a_tag.get_text(strip=True)
+            if len(link_text) < 5 and not (a_tag.find('img') and a_tag.find('img').get('alt')):
+                continue
+
+            # Add the link without applying URL-based heuristics
+            links.add(full_url)
+
+        return list(links)
+
+    def _find_post_links_on_page(self, soup: BeautifulSoup, page_url: str, use_wp_heuristics: bool = True) -> None:
+        """
+        Scans a page's soup for likely post links and adds them to discovered_urls.
+
+        Args:
+            soup: The BeautifulSoup object of the page
+            page_url: The URL of the page
+            use_wp_heuristics: Whether to use WordPress-specific URL heuristics (default: True)
+        """
+        # Choose the appropriate link extraction method based on whether we're dealing with a WordPress site
+        if use_wp_heuristics:
+            article_links = self._extract_article_links(soup, page_url)
+            logger.debug("Using WordPress-specific URL heuristics for link discovery")
+        else:
+            article_links = self._extract_non_wp_article_links(soup, page_url)
+            logger.debug("Using generic heuristics for non-WordPress link discovery")
+
+        # Add new links to discovered_urls
+        found_count = 0
+        for url in article_links:
+            if url not in self.discovered_urls and url not in self.processed_urls:
+                self.discovered_urls.add(url)
+                found_count += 1
+                logger.debug(f"Found potential post link: {url}")
 
         logger.info(f"Added {found_count} new potential post URLs from {page_url}")
 
-    def _scrape_html_for_links(self) -> bool:
-        """Scrapes the initial base_url for post links if API fails."""
+    def _extract_pagination_links(self, soup: BeautifulSoup, page_url: str) -> List[str]:
+        """
+        Extract pagination links from a page.
+
+        According to requirements, we only want URLs that:
+        1. End with "?page=" followed by a number
+        2. Don't have additional parameters after the page number
+        3. Have page numbers between 1 and 100
+
+        Args:
+            soup: The BeautifulSoup object of the page
+            page_url: The URL of the page
+
+        Returns:
+            A list of pagination URLs
+        """
+        pagination_links = []
+
+        # Parse the base URL to get the part before any query parameters
+        parsed_url = urlparse(page_url)
+        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+
+        # Check if the current URL has a page parameter
+        query_params = parse_qs(parsed_url.query)
+        current_page = 0
+        if 'page' in query_params and query_params['page']:
+            try:
+                current_page = int(query_params['page'][0])
+            except ValueError:
+                current_page = 0
+
+        # Generate the next page URL if we're below page 100
+        if current_page < 100:
+            next_page = current_page + 1
+            pagination_url = f"{base_url}?page={next_page}"
+            pagination_links.append(pagination_url)
+            logger.debug(f"Generated next pagination URL: {pagination_url}")
+
+        # If we're on the base URL (no page parameter), also add page=1
+        if current_page == 0 and 'page' not in query_params:
+            pagination_url = f"{base_url}?page=1"
+            pagination_links.append(pagination_url)
+            logger.debug(f"Generated first pagination URL: {pagination_url}")
+
+        return pagination_links
+
+    def _scrape_html_for_links(self, use_wp_heuristics: bool = True) -> bool:
+        """
+        Scrapes the initial base_url for post links if API fails.
+        Also navigates through pagination links to find more posts.
+
+        Args:
+            use_wp_heuristics: Whether to use WordPress-specific URL heuristics (default: True)
+        """
         logger.info(f"Attempting to find post links via HTML scraping starting from {self.base_url}")
-        soup = self._fetch_soup(self.base_url)
-        if not soup:
-            logger.error(f"Could not fetch or parse the base URL: {self.base_url}. Cannot scrape for links.")
-            return False
+
+        # Start with the base URL
+        pages_to_scrape = [self.base_url]
+        scraped_pages = set()
+        max_pages = config.API_MAX_PAGES  # Reuse the same limit as API pagination
 
         initial_count = len(self.discovered_urls)
-        self._find_post_links_on_page(soup, self.base_url)
 
+        # We don't need special case handling anymore as we're using a simpler pagination approach
+        # that works for all sites
+
+        # Process pages until we run out or hit the limit
+        while pages_to_scrape and len(scraped_pages) < max_pages:
+            current_page_url = pages_to_scrape.pop(0)
+
+            # Skip if we've already scraped this page
+            if current_page_url in scraped_pages:
+                continue
+
+            logger.info(f"Scraping page: {current_page_url}")
+
+            # Store the count of discovered URLs before processing this page
+            # (for detecting if new links were found)
+            initial_discovered_count = len(self.discovered_urls)
+
+            soup = self._fetch_soup(current_page_url)
+            if not soup:
+                logger.warning(f"Could not fetch or parse: {current_page_url}. Skipping.")
+                continue
+
+            # Find post links on this page
+            self._find_post_links_on_page(soup, current_page_url, use_wp_heuristics)
+
+            # Calculate how many new links were found on this page
+            new_links_found = len(self.discovered_urls) - initial_discovered_count
+            logger.debug(f"Found {new_links_found} new links on page: {current_page_url}")
+
+            # Mark this page as scraped
+            scraped_pages.add(current_page_url)
+
+            # Find pagination links and add them to the queue
+            pagination_links = self._extract_pagination_links(soup, current_page_url)
+            for link in pagination_links:
+                if link not in scraped_pages and link not in pages_to_scrape:
+                    pages_to_scrape.append(link)
+                    logger.debug(f"Added pagination link to queue: {link}")
+
+            # We don't need special case handling anymore as we're using a simpler pagination approach
+            # that works for all sites
+
+            # Be polite between page requests
+            time.sleep(config.INTER_REQUEST_DELAY)
+
+        if len(scraped_pages) >= max_pages:
+            logger.warning(f"Reached maximum page limit ({max_pages}). Some pages may not have been scraped.")
+
+        logger.info(f"Scraped {len(scraped_pages)} pages in total.")
         return len(self.discovered_urls) > initial_count
 
     # --- Content Extraction ---
@@ -444,23 +637,84 @@ class BlogScraper:
             logger.warning(f"Could not extract sufficient data (title/content) from {url} using guessed selectors.")
             return None
 
+    def _analyze_url_patterns(self) -> None:
+        """
+        Analyzes discovered URLs to identify the most likely blog post URL pattern.
+        This helps filter out non-blog-post URLs that might have been discovered.
+        """
+        if not self.discovered_urls:
+            logger.warning("No URLs to analyze for patterns.")
+            return
+
+        # Extract path patterns from URLs
+        path_patterns = {}
+        for url in self.discovered_urls:
+            parsed = urlparse(url)
+            path = parsed.path
+
+            # Skip URLs with query parameters or fragments for pattern analysis
+            if parsed.query or parsed.fragment:
+                continue
+
+            # Count occurrences of each path pattern
+            # We'll look at the directory structure and count how many URLs share similar patterns
+            path_parts = path.split('/')
+            if len(path_parts) >= 3:  # Need at least /dir/something
+                # Create a pattern by keeping the directory structure but replacing the last part with a wildcard
+                pattern = '/'.join(path_parts[:-1]) + '/*'
+                path_patterns[pattern] = path_patterns.get(pattern, 0) + 1
+
+        # Find the most common pattern
+        most_common_pattern = None
+        max_count = 0
+        for pattern, count in path_patterns.items():
+            if count > max_count:
+                max_count = count
+                most_common_pattern = pattern
+
+        if most_common_pattern and max_count >= 3:  # Require at least 3 URLs with the same pattern
+            self.likely_post_url_pattern = most_common_pattern
+            logger.info(f"Identified likely blog post URL pattern: {most_common_pattern} (matched {max_count} URLs)")
+
+            # Filter URLs based on the identified pattern
+            for url in self.discovered_urls:
+                parsed = urlparse(url)
+                path = parsed.path
+                path_parts = path.split('/')
+                if len(path_parts) >= 3:
+                    # Check if this URL matches the pattern (same directory structure)
+                    url_pattern = '/'.join(path_parts[:-1]) + '/*'
+                    if url_pattern == self.likely_post_url_pattern:
+                        self.filtered_urls.add(url)
+
+            logger.info(f"Filtered {len(self.filtered_urls)} URLs that match the likely blog post pattern out of {len(self.discovered_urls)} total discovered URLs")
+        else:
+            logger.warning("Could not identify a clear blog post URL pattern. Using all discovered URLs.")
+            self.filtered_urls = self.discovered_urls.copy()
+
     def _fetch_and_extract_posts(self) -> None:
         """Iterates through discovered URLs, fetches content, and extracts data."""
         if not self.discovered_urls:
              logger.warning("No potential post URLs were discovered. Cannot extract posts.")
              return
 
-        # Use the first discovered URL to guess selectors if not already done (e.g., by API)
-        if not self._api_used_successfully and not any(self.content_selectors.values()):
-            sample_url = next(iter(self.discovered_urls)) # Get an arbitrary URL from the set
+        # Analyze URL patterns to identify the most likely blog post URLs
+        self._analyze_url_patterns()
+
+        # Use filtered URLs if available, otherwise use all discovered URLs
+        urls_to_process = self.filtered_urls if self.filtered_urls else self.discovered_urls
+
+        # Use the first URL to guess selectors if not already done (e.g., by API)
+        if not self._api_used_successfully and not any(self.content_selectors.values()) and urls_to_process:
+            sample_url = next(iter(urls_to_process)) # Get an arbitrary URL from the set
             self._guess_content_selectors(sample_url)
 
-        logger.info(f"Fetching content for {len(self.discovered_urls)} discovered URLs...")
-        for url in list(self.discovered_urls): # Iterate over a copy for safe removal
+        logger.info(f"Fetching content for {len(urls_to_process)} URLs...")
+        for url in list(urls_to_process): # Iterate over a copy for safe removal
             if url in self.processed_urls:
                 continue
 
-            logger.debug(f"Processing URL: {url}")
+            logger.info(f"Processing URL: {url}")
             soup = self._fetch_soup(url)
             if soup:
                 post_data = self._extract_post_data(url, soup)
@@ -474,14 +728,29 @@ class BlogScraper:
             time.sleep(config.INTER_REQUEST_DELAY)
 
     def run(self) -> List[PostData]:
-        """Executes the full scraping process."""
+        """
+        Executes the full scraping process.
+
+        The scraper follows this workflow:
+        1. Attempts to discover a WordPress REST API
+        2. If API is found, fetches post URLs from the API
+        3. If API is not found or fails:
+           - Falls back to HTML link discovery
+           - Uses a generic heuristic for non-WordPress sites that doesn't rely on URL patterns
+           - This heuristic is more effective for sites with non-standard URL structures
+        4. Fetches and extracts content from the discovered URLs
+
+        Returns:
+            A list of PostData objects containing the extracted blog posts
+        """
         self._discover_wp_api()
         if self.api_root_url:
             self._fetch_urls_from_api() # Populates self.discovered_urls if successful
 
         if not self._api_used_successfully:
             logger.info("API not found or failed, falling back to HTML link discovery.")
-            self._scrape_html_for_links() # Adds to self.discovered_urls
+            # Use generic heuristic for non-WordPress sites
+            self._scrape_html_for_links(use_wp_heuristics=False) # Adds to self.discovered_urls
 
         self._fetch_and_extract_posts() # Fetches content and extracts data
 

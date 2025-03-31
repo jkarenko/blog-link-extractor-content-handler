@@ -84,4 +84,4 @@ MIN_CONTENT_LENGTH = 150
 # How many posts to fetch per API request (adjust based on API limits)
 API_POSTS_PER_PAGE = 20
 # Maximum number of pages to fetch from API to prevent infinite loops
-API_MAX_PAGES = 50 
+API_MAX_PAGES = 10
