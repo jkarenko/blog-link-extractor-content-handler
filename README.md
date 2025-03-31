@@ -39,6 +39,7 @@ blech [OPTIONS] <BASE_URL>
 
 *   `-o`, `--output <FILENAME>`: (Optional) The file where extracted content should be saved. If not provided, a default filename will be generated based on the blog's domain (e.g., `example-blog.com_blog_posts.txt`).
 *   `-l`, `--lang <LANG_CODE>`: (Optional) Filter posts by language code (e.g., 'en', 'fi'). This primarily works when the blog uses a WordPress REST API that supports language filtering.
+*   `-o1`, `--one-file`: (Optional) Save all blog posts to a single file instead of separate files. By default, each post is saved as a separate file in a directory named based on the output filename without the .txt extension (e.g., `example-blog.com_blog_posts`).
 *   `-h`, `--help`: (Optional) Show this help message and exit.
 
 ### Example:
@@ -49,3 +50,15 @@ poetry run blech --output my_blog_extract.txt --lang en https://example-blog.com
 
 # Scrape all posts and use the default filename
 poetry run blech https://another-blog.org/
+
+# Scrape posts and save each one as a separate file in a directory (default behavior)
+poetry run blech https://example-blog.com/
+
+# Scrape posts, specify output directory name, and save as separate files
+poetry run blech --output custom_dir_name.txt https://example-blog.com/
+
+# Scrape posts and save all to a single file
+poetry run blech --one-file https://example-blog.com/
+
+# Scrape posts, specify output filename, and save to a single file
+poetry run blech --output custom_file_name.txt --one-file https://example-blog.com/

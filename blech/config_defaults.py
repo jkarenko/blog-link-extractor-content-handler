@@ -76,6 +76,10 @@ DATE_REGEX_PATTERNS = [
 ]
 
 
+# --- Content Length Settings ---
+# Minimum length (in characters) for text to be considered valid content
+MIN_CONTENT_LENGTH = 150
+
 # --- API Settings ---
 # How many posts to fetch per API request (adjust based on API limits)
 API_POSTS_PER_PAGE = 20
