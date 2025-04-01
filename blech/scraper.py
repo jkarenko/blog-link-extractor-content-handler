@@ -53,6 +53,7 @@ class BlogScraper:
         self.all_post_data: List[PostData] = []
         self.likely_post_url_pattern: Optional[str] = None
         self.filtered_urls: Set[str] = set()  # URLs that match the likely post pattern
+        self.api_post_data: Dict[str, Dict[str, Any]] = {}  # Store API data for each post URL
 
         # Pagination state for special cases
         self._afry_pagination_template: Optional[str] = None
@@ -249,6 +250,8 @@ class BlogScraper:
                 parsed = urlparse(url)
                 if parsed.scheme and parsed.netloc:
                     api_urls.add(url)
+                    # Store the entire post data keyed by URL for later use
+                    self.api_post_data[url] = post
                 else:
                     logger.debug(f"Ignoring invalid URL from API: {url}")
 
@@ -610,12 +613,30 @@ class BlogScraper:
         if not found_title or not found_content:
             logger.warning("Incomplete content selectors guessed")
 
-    def _extract_post_data(self, url: str, soup: BeautifulSoup) -> Optional[PostData]:
-        """Extracts title, date, and content from a post's soup using guessed selectors."""
+    def _extract_post_data(self, url: str, soup: BeautifulSoup, api_data: Optional[Dict[str, Any]] = None) -> Optional[PostData]:
+        """
+        Extracts title, date, and content from a post's soup using guessed selectors.
+        If api_data is provided, uses it for metadata like dates.
+        """
         title, date_str, content = None, None, None
 
-        # Extract Title
-        if self.content_selectors['title']:
+        # Use API data for title and date if available
+        if api_data:
+            # Extract title from API data
+            if 'title' in api_data and 'rendered' in api_data['title']:
+                title = api_data['title']['rendered']
+                if title:
+                    # Remove HTML tags if present
+                    title = re.sub(r'<[^>]+>', '', title).strip()
+                    logger.debug(f"Using title from API: {title[:50]}...")
+
+            # Extract date from API data
+            if 'date' in api_data and api_data['date']:
+                date_str = api_data['date']
+                logger.debug(f"Using date from API: {date_str}")
+
+        # If title not found in API data, extract from HTML
+        if not title and self.content_selectors['title']:
             element = soup.select_one(self.content_selectors['title'])
             if element:
                 title = element.get_text(strip=True)
@@ -634,8 +655,8 @@ class BlogScraper:
                         logger.debug(f"Using fallback H1 tag for title: {title[:50]}...")
                         break
 
-        # Extract Date
-        if self.content_selectors['date']:
+        # If date not found in API data, extract from HTML
+        if not date_str and self.content_selectors['date']:
             element = soup.select_one(self.content_selectors['date'])
             if element:
                 attr = self.content_selectors['date_attr']
@@ -643,58 +664,93 @@ class BlogScraper:
                     date_str = element[attr]
                 else: # Get text if attribute not specified or not found
                     date_str = element.get_text(strip=True)
-        elif self.content_selectors['date_text']: # Use regex match if available
+        elif not date_str and self.content_selectors['date_text']: # Use regex match if available
              date_str = self.content_selectors['date_text']
 
-        # Extract Content
-        content_extracted = False
-        if self.content_selectors['content']:
-            element = soup.select_one(self.content_selectors['content'])
-            if element:
-                # Basic cleanup - get text, separate paragraphs
-                paragraphs = element.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li', 'pre']) # Common text block tags
-                if paragraphs:
-                     content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-                     content_extracted = bool(content)
+        # Fallback: Look for any date in the content
+        if not date_str and content:
+            # Look for common date formats in the content
+            # This will match dates like DD.MM.YYYY, YYYY-MM-DD, MM/DD/YYYY, etc.
+            # It will also match dates with a "Blog" prefix or any other prefix
+            date_patterns = [
+                r'(\d{1,2}\.\d{1,2}\.\d{4})',  # DD.MM.YYYY
+                r'(\d{4}-\d{1,2}-\d{1,2})',    # YYYY-MM-DD
+                r'(\d{1,2}/\d{1,2}/\d{4})',    # MM/DD/YYYY or DD/MM/YYYY
+                r'(\d{1,2}\s+[A-Za-z]+\s+\d{4})'  # DD Month YYYY
+            ]
 
-                # Fallback to all text if no block tags found or no content extracted
-                if not content_extracted:
-                    content = element.get_text(strip=True, separator='\n')
-                    content_extracted = len(content) > config.MIN_CONTENT_LENGTH
+            for pattern in date_patterns:
+                date_match = re.search(pattern, content)
+                if date_match:
+                    date_str = date_match.group(1)
+                    logger.debug(f"Extracted date from content: {date_str}")
+                    break
 
-        # Fallback content extraction if no content found with guessed selectors
-        if not content_extracted:
-            # Try main tag first
-            main_tag = soup.find('main')
-            if main_tag:
-                # Try to find paragraphs within main
-                paragraphs = main_tag.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
-                if paragraphs:
-                    content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-                    content_extracted = bool(content)
-
-                # If still no content, try to get all text from main
-                if not content_extracted:
-                    content = main_tag.get_text(strip=True, separator='\n')
-                    content_extracted = len(content) > config.MIN_CONTENT_LENGTH
-
-                if content_extracted:
-                    logger.debug(f"Extracted content from main tag, length: {len(content)}")
-
-            # If still no content, try article tag
-            if not content_extracted:
-                article_tags = soup.find_all('article')
-                for article in article_tags:
-                    paragraphs = article.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
+        # Try to extract content from API data if available
+        if api_data and 'content' in api_data and 'rendered' in api_data['content']:
+            # Extract content from API data
+            api_content = api_data['content']['rendered']
+            if api_content:
+                # Convert HTML to plain text
+                soup_content = BeautifulSoup(api_content, 'html.parser')
+                content = soup_content.get_text(separator='\n')
+                logger.debug(f"Using content from API, length: {len(content)}")
+                content_extracted = True
+        else:
+            # Extract Content from HTML
+            content_extracted = False
+            if self.content_selectors['content']:
+                element = soup.select_one(self.content_selectors['content'])
+                if element:
+                    # Basic cleanup - get text, separate paragraphs
+                    paragraphs = element.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li', 'pre']) # Common text block tags
                     if paragraphs:
-                        content = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                         content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                         content_extracted = bool(content)
+
+                    # Fallback to all text if no block tags found or no content extracted
+                    if not content_extracted:
+                        content = element.get_text(strip=True, separator='\n')
+                        content_extracted = len(content) > config.MIN_CONTENT_LENGTH
+
+            # Fallback content extraction if no content found with guessed selectors
+            if not content_extracted:
+                # Try main tag first
+                main_tag = soup.find('main')
+                if main_tag:
+                    # Try to find paragraphs within main
+                    paragraphs = main_tag.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
+                    if paragraphs:
+                        content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
                         content_extracted = bool(content)
-                        if content_extracted:
-                            logger.debug(f"Extracted content from article tag, length: {len(content)}")
-                            break
+
+                    # If still no content, try to get all text from main
+                    if not content_extracted:
+                        content = main_tag.get_text(strip=True, separator='\n')
+                        content_extracted = len(content) > config.MIN_CONTENT_LENGTH
+
+                    if content_extracted:
+                        logger.debug(f"Extracted content from main tag, length: {len(content)}")
+
+                # If still no content, try article tag
+                if not content_extracted:
+                    article_tags = soup.find_all('article')
+                    for article in article_tags:
+                        paragraphs = article.find_all(['p', 'h2', 'h3', 'h4', 'li', 'pre'])
+                        if paragraphs:
+                            content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+                            content_extracted = bool(content)
+                            if content_extracted:
+                                logger.debug(f"Extracted content from article tag, length: {len(content)}")
+                                break
 
         # Basic validation: Need at least URL and some content or title
         if content or title:
+            # Post-process content to remove excessive consecutive empty lines
+            if content:
+                # Replace 3 or more consecutive newlines with 2 newlines (one empty line)
+                content = re.sub(r'\n{3,}', '\n\n', content)
+
             logger.debug(f"Extracted - Title: {title is not None}, Date: {date_str is not None}, Content: {content is not None} from {url}")
             return PostData(url=url, title=title, date=date_str, content=content)
         else:
@@ -779,15 +835,31 @@ class BlogScraper:
                 continue
 
             logger.info(f"Processing URL: {url}")
+
+            # Check if we have API data for this URL
+            api_data = self.api_post_data.get(url)
+
+            # Fetch HTML content
             soup = self._fetch_soup(url)
             if soup:
-                post_data = self._extract_post_data(url, soup)
+                # Extract post data from HTML, potentially using API data for metadata
+                post_data = self._extract_post_data(url, soup, api_data)
                 if post_data:
                     self.all_post_data.append(post_data)
                     # Save post immediately after processing
                     self._save_post_to_file(post_data, len(self.all_post_data) - 1)
             else:
-                 logger.warning(f"Skipping post data extraction for {url} due to fetch/parse error.")
+                # If HTML fetch failed but we have API data, create PostData from API data only
+                if api_data:
+                    logger.info(f"Using API data for {url} as HTML fetch failed")
+                    title = api_data.get('title', {}).get('rendered', '')
+                    date = api_data.get('date', '')
+                    # We don't have content, but at least we have title and date
+                    post_data = PostData(url=url, title=title, date=date, content=None)
+                    self.all_post_data.append(post_data)
+                    self._save_post_to_file(post_data, len(self.all_post_data) - 1)
+                else:
+                    logger.warning(f"Skipping post data extraction for {url} due to fetch/parse error.")
 
             self.processed_urls.add(url)
             # Be polite between fetching full post pages
