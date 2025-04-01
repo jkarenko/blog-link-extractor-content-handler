@@ -77,6 +77,7 @@ blech [OPTIONS] <BASE_URL>
 *   `--max-pages <NUMBER>`: (Optional) Maximum number of pages to fetch. Overrides the default limit (10 pages).
 *   `--start-page <NUMBER>`: (Optional) Starting page number for scraping. Default is 1.
 *   `--end-page <NUMBER>`: (Optional) Ending page number for scraping. Default is the value of max-pages.
+*   `--posts-per-page <NUMBER>`: (Optional) Number of posts to fetch per API request. Overrides the default value (20 posts).
 *   `-h`, `--help`: (Optional) Show this help message and exit.
 
 ### Example:
@@ -108,3 +109,6 @@ poetry run blech --start-page 3 https://example-blog.com/
 
 # Scrape posts from page 2 to page 5 only
 poetry run blech --start-page 2 --end-page 5 https://example-blog.com/
+
+# Scrape posts with 50 posts per API request (instead of the default 20)
+poetry run blech --posts-per-page 50 https://example-blog.com/

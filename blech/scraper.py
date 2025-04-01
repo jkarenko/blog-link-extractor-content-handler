@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 class BlogScraper:
     def __init__(self, base_url: str, lang: Optional[str] = None, output_filename: Optional[str] = None,
-                 max_pages: Optional[int] = None, start_page: int = 1, end_page: Optional[int] = None):
+                 max_pages: Optional[int] = None, start_page: int = 1, end_page: Optional[int] = None,
+                 posts_per_page: Optional[int] = None):
         """
         Initializes the scraper.
 
@@ -33,6 +34,7 @@ class BlogScraper:
             max_pages: Maximum number of pages to fetch. Overrides config.API_MAX_PAGES if provided.
             start_page: Starting page number for scraping (default: 1).
             end_page: Ending page number for scraping. If not provided, scrapes until max_pages or end of content.
+            posts_per_page: Number of posts to fetch per API request. Overrides config.API_POSTS_PER_PAGE if provided.
 
         Raises:
             ValueError: If the base_url is invalid.
@@ -46,6 +48,7 @@ class BlogScraper:
         self.max_pages = max_pages if max_pages is not None else config.API_MAX_PAGES
         self.start_page = start_page
         self.end_page = end_page if end_page is not None else self.max_pages
+        self.posts_per_page = posts_per_page if posts_per_page is not None else config.API_POSTS_PER_PAGE
 
         # Internal state
         self.discovered_urls: Set[str] = set()
@@ -192,7 +195,7 @@ class BlogScraper:
         if not self.api_root_url:
             return None
         posts_endpoint = urljoin(self.api_root_url, 'wp/v2/posts')
-        params = {'page': page, 'per_page': config.API_POSTS_PER_PAGE, '_embed': 'true'}
+        params = {'page': page, 'per_page': self.posts_per_page, '_embed': 'true'}
         if self.lang:
             params['lang'] = self.lang
 

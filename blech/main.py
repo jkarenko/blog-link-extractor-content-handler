@@ -52,6 +52,7 @@ def main():
     parser.add_argument("--max-pages", type=int, help="Maximum number of pages to fetch.", default=config.API_MAX_PAGES)
     parser.add_argument("--start-page", type=int, help="Starting page number for scraping.", default=1)
     parser.add_argument("--end-page", type=int, help="Ending page number for scraping.", default=None)
+    parser.add_argument("--posts-per-page", type=int, help="Number of posts to fetch per API request.", default=config.API_POSTS_PER_PAGE)
 
     args = parser.parse_args()
 
@@ -84,7 +85,8 @@ def main():
             output_filename=output_filename,
             max_pages=args.max_pages,
             start_page=args.start_page,
-            end_page=args.end_page
+            end_page=args.end_page,
+            posts_per_page=args.posts_per_page
         )
         # Set one_file flag based on command-line argument
         scraper.one_file = args.one_file
